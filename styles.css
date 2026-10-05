@@ -105,6 +105,7 @@ body {
 
 .product-card-active {
   background: rgba(0, 0, 0, 0.75);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   padding: 40px;
   border-radius: 12px;
@@ -312,6 +313,7 @@ body {
   font-size: 11px;
   font-weight: 700;
   border-radius: 4px;
+  cursor: pointer;
 }
 
 .sub-tab-btn.active {
