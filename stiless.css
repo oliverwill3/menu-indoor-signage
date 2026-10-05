@@ -1,0 +1,320 @@
+/* ==========================================================================
+   1. VARIÁVEIS GLOBAIS E REGRAS DE BASE
+   ========================================================================== */
+:root {
+  --bg-primary: #000000;
+  --bg-secondary: #121212;
+  --bg-card: #1e1e1e;
+  --accent-gold: #d4af37;
+  --accent-gold-hover: #f1c40f;
+  --text-main: #ffffff;
+  --text-muted: #a0a0a0;
+  --border-color: #2a2a2a;
+  --font-heading: 'Montserrat', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: var(--font-body);
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   2. LAYOUT DO PLAYER DA TV (16:9 FULLSCREEN)
+   ========================================================================== */
+.tv-layout {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 80px 1fr 50px;
+  background-color: var(--bg-primary);
+}
+
+/* Região 1: Header Top Bar */
+.tv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 40px;
+  border-bottom: 2px solid var(--accent-gold);
+  background: linear-gradient(180deg, rgba(20,20,20,1) 0%, rgba(0,0,0,1) 100%);
+}
+
+.brand-info {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.logo-placeholder {
+  width: 50px;
+  height: 50px;
+  background-color: var(--accent-gold);
+  color: #000;
+  font-weight: 800;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.tv-header h1 {
+  font-family: var(--font-heading);
+  font-size: 24px;
+  color: var(--accent-gold);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.slogans {
+  display: flex;
+  gap: 30px;
+  font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* Região Central (Main + Sidebar Destaques) */
+.tv-body {
+  display: grid;
+  grid-template-columns: 70% 30%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Região 2: Exibição Principal de Produtos (70%) */
+.tv-main-display {
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+.product-card-active {
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(10px);
+  padding: 40px;
+  border-radius: 12px;
+  border-left: 5px solid var(--accent-gold);
+  max-width: 80%;
+}
+
+.product-title {
+  font-family: var(--font-heading);
+  font-size: 42px;
+  margin-bottom: 15px;
+  color: var(--text-main);
+}
+
+.product-desc {
+  font-size: 18px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* Região 3: Lateral Destaques (30%) */
+.tv-sidebar {
+  border-left: 1px solid var(--border-color);
+  background-color: #080808;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-logo {
+  padding: 30px;
+  display: flex;
+  justify-content: center;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.logo-box {
+  width: 100%;
+  height: 80px;
+  border: 1px dashed var(--accent-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-gold);
+  font-weight: 700;
+}
+
+.sidebar-promo {
+  padding: 30px;
+  flex-grow: 1;
+}
+
+.sidebar-promo h3 {
+  font-family: var(--font-heading);
+  color: var(--accent-gold);
+  font-size: 18px;
+  margin-bottom: 20px;
+  letter-spacing: 1px;
+}
+
+.sidebar-promo ul {
+  list-style: none;
+}
+
+.sidebar-promo li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  font-size: 16px;
+}
+
+/* Região 4: Faixa de Rodapé Marquee */
+.tv-footer {
+  background-color: var(--accent-gold);
+  color: #000;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.marquee-wrapper {
+  width: 100%;
+}
+
+.marquee-text {
+  display: inline-block;
+  padding-left: 100%;
+  animation: marquee 25s linear infinite;
+  font-weight: 700;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+@keyframes marquee {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(-100%, 0); }
+}
+
+/* ==========================================================================
+   3. LAYOUT DO PAINEL DE CONTROLO MOBILE (?admin=1)
+   ========================================================================== */
+.admin-layout {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  background-color: var(--bg-secondary);
+  padding: 20px;
+}
+
+.admin-header {
+  margin-bottom: 20px;
+}
+
+.admin-header h2 {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  letter-spacing: 1px;
+}
+
+.tenant-tag {
+  color: var(--accent-gold);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Navegação por Abas */
+.admin-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 12px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.tab-btn.active {
+  background-color: #d32f2f; /* Destaque Vermelho/Aviso como nos protótipos */
+  border-color: #d32f2f;
+}
+
+/* Formulários Mobile */
+.admin-content h3 {
+  font-size: 14px;
+  margin-bottom: 15px;
+  color: var(--text-muted);
+}
+
+.form-group {
+  margin-bottom: 15px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+}
+
+.form-group input {
+  width: 100%;
+  padding: 12px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.btn-primary {
+  width: 100%;
+  padding: 14px;
+  background-color: #e67e22; /* Botões laranja como nos protótipos */
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.sub-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.sub-tab-btn {
+  padding: 10px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+}
+
+.sub-tab-btn.active {
+  background-color: #d32f2f;
+  border-color: #d32f2f;
+}
