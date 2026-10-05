@@ -1,5 +1,5 @@
 [build]
-  publish = "."
+  publish = "public"
 
 # Rotas por tenant (ex: /gutemberg) servem a SPA; ficheiros estáticos existentes têm prioridade
 [[redirects]]
