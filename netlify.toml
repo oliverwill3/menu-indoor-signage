@@ -1,0 +1,8 @@
+[build]
+  publish = "public"
+
+# Rotas por tenant (ex: /gutemberg) servem a SPA; ficheiros estáticos existentes têm prioridade
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

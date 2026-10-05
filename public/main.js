@@ -14,6 +14,16 @@ let currentTenantData = {
   corBorda: '#d4af37'
 };
 
+// Escapa valores dinâmicos antes de os injetar no HTML (evita quebra de layout e XSS)
+function escapeHTML(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // 2. Detetor de Rota e Dispositivo
 function initApp() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -25,18 +35,18 @@ function initApp() {
 
   console.log(`[App Init] Tenant: ${tenantId} | Modo Admin: ${isAdmin}`);
 
-  // Oculta o loader inicial
-  if (initialLoader) {
-    initialLoader.style.opacity = '0';
-    setTimeout(() => initialLoader.remove(), 500);
-  }
-
   // Renderiza a vista correspondente
   if (isAdmin) {
     document.body.classList.add('admin-mode');
     renderAdminPanel(tenantId);
   } else {
     renderTVPlayer(tenantId);
+  }
+
+  // Oculta o loader inicial
+  if (initialLoader) {
+    initialLoader.style.opacity = '0';
+    setTimeout(() => initialLoader.remove(), 500);
   }
 }
 
@@ -48,11 +58,11 @@ function renderTVPlayer(tenantId) {
       <header class="tv-header">
         <div class="brand-info">
           <div class="logo-placeholder">LOGO</div>
-          <h1 id="tv-company-name">${currentTenantData.nomeEmpresa}</h1>
+          <h1 id="tv-company-name">${escapeHTML(currentTenantData.nomeEmpresa)}</h1>
         </div>
         <div class="slogans">
-          <span id="tv-slogan-1">${currentTenantData.slogan1}</span>
-          <span id="tv-slogan-2">${currentTenantData.slogan2}</span>
+          <span id="tv-slogan-1">${escapeHTML(currentTenantData.slogan1)}</span>
+          <span id="tv-slogan-2">${escapeHTML(currentTenantData.slogan2)}</span>
         </div>
       </header>
 
@@ -84,7 +94,7 @@ function renderTVPlayer(tenantId) {
       <!-- Região 4: Faixa de Rodapé Marquee -->
       <footer class="tv-footer">
         <div class="marquee-wrapper">
-          <p class="marquee-text" id="tv-footer-text">${currentTenantData.textoRodape}</p>
+          <p class="marquee-text" id="tv-footer-text">${escapeHTML(currentTenantData.textoRodape)}</p>
         </div>
       </footer>
     </div>
@@ -97,14 +107,14 @@ function renderAdminPanel(tenantId) {
     <div id="admin-panel-container" class="admin-layout">
       <header class="admin-header">
         <h2>PAINEL DE CONTROLE</h2>
-        <p class="tenant-tag">${currentTenantData.nomeEmpresa}</p>
+        <p class="tenant-tag">${escapeHTML(currentTenantData.nomeEmpresa)}</p>
       </header>
 
       <!-- Navegação por Abas -->
       <nav class="admin-tabs">
-        <button class="tab-btn active" data-tab="id-visual">ID VISUAL</button>
-        <button class="tab-btn" data-tab="produtos">PRODUTOS</button>
-        <button class="tab-btn" data-tab="plus">PLUS +</button>
+        <button type="button" class="tab-btn active" data-tab="id-visual">ID VISUAL</button>
+        <button type="button" class="tab-btn" data-tab="produtos">PRODUTOS</button>
+        <button type="button" class="tab-btn" data-tab="plus">PLUS +</button>
       </nav>
 
       <!-- Conteúdo das Abas -->
@@ -114,32 +124,32 @@ function renderAdminPanel(tenantId) {
           <h3>CONFIGURAÇÃO DA LOJA</h3>
           <div class="form-group">
             <label>Nome da Empresa</label>
-            <input type="text" value="${currentTenantData.nomeEmpresa}" />
+            <input type="text" value="${escapeHTML(currentTenantData.nomeEmpresa)}" />
           </div>
           <div class="form-group">
             <label>Slogan</label>
-            <input type="text" value="${currentTenantData.slogan1}" />
+            <input type="text" value="${escapeHTML(currentTenantData.slogan1)}" />
           </div>
           <div class="form-group">
             <label>Texto do Rodapé</label>
-            <input type="text" value="${currentTenantData.textoRodape}" />
+            <input type="text" value="${escapeHTML(currentTenantData.textoRodape)}" />
           </div>
         </section>
 
         <!-- Aba PRODUTOS -->
         <section id="tab-produtos" class="tab-content" style="display:none;">
           <h3>PRODUTOS & CATEGORIAS</h3>
-          <button class="btn-primary">+ Adicionar Categoria</button>
-          <button class="btn-primary">+ Adicionar Item</button>
+          <button type="button" class="btn-primary">+ Adicionar Categoria</button>
+          <button type="button" class="btn-primary">+ Adicionar Item</button>
         </section>
 
         <!-- Aba PLUS + -->
         <section id="tab-plus" class="tab-content" style="display:none;">
           <div class="sub-tabs">
-            <button class="sub-tab-btn active">VISUAL</button>
-            <button class="sub-tab-btn">AVALIAÇÕES</button>
-            <button class="sub-tab-btn">DIVULGAÇÕES</button>
-            <button class="sub-tab-btn">INFORMATIVO</button>
+            <button type="button" class="sub-tab-btn active">VISUAL</button>
+            <button type="button" class="sub-tab-btn">AVALIAÇÕES</button>
+            <button type="button" class="sub-tab-btn">DIVULGAÇÕES</button>
+            <button type="button" class="sub-tab-btn">INFORMATIVO</button>
           </div>
         </section>
       </main>
@@ -160,10 +170,24 @@ function setupAdminTabs() {
       
       tab.classList.add('active');
       const target = tab.getAttribute('data-tab');
-      document.getElementById(`tab-${target}`).style.display = 'block';
+      const section = document.getElementById(`tab-${target}`);
+      if (section) section.style.display = 'block';
+    });
+  });
+
+  // Alternância das sub-abas da aba PLUS +
+  const subTabs = document.querySelectorAll('.sub-tab-btn');
+  subTabs.forEach(subTab => {
+    subTab.addEventListener('click', () => {
+      subTabs.forEach(t => t.classList.remove('active'));
+      subTab.classList.add('active');
     });
   });
 }
 
-// Inicializa a aplicação ao carregar a página
-window.addEventListener('DOMContentLoaded', initApp);
+// Inicializa a aplicação ao carregar a página (scripts module já correm após o parse do DOM)
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
