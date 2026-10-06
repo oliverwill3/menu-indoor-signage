@@ -1,44 +1,52 @@
-# menu-indoor-signage
-Plataforma SaaS White-Label de Digital Signage e Cardápio Dinâmico com gestão mobile em tempo real e exibição responsiva para TVs (16:9).
-# 📺 Menu & Indoor Signage System (White-Label)
+# Mídia Indoor multi-tenant
 
-Sistema completo de Mídia Indoor e Cardápio Digital Dinâmico focado em estabelecimentos comerciais. Permite a gestão em tempo real de produtos, preços, destaques, conteúdos promocionais, informativos e avaliações do Google diretamente pelo telemóvel, com sincronização instantânea num Player de TV (16:9).
+Aplicação Next.js com player de TV por tenant, painel mobile autenticado e conteúdo em tempo real no Firestore. O cliente e seus dados de demonstração ficam fora dos valores padrão da aplicação.
 
-## 🚀 Principais Funcionalidades
+## Desenvolvimento
 
-- **📱 Painel de Controlo Mobile (`?admin=1`):**
-  - Login obrigatório com usuário e senha, opção para manter a sessão neste dispositivo e botão para sair.
-  - Edição do nome, logo, slogans e letreiro do rodapé.
-  - Inclusão, remoção e ordenação de produtos da vitrine, com descrição, preço e URL da imagem.
-  - Inclusão, remoção e ordenação das promoções exibidas na lateral da TV.
-  - Interface responsiva, adequada a telas de celular e controles touch.
+1. Instale as dependências com `npm install`.
+2. Copie `.env.example` para `.env.local` e preencha as variáveis `NEXT_PUBLIC_FIREBASE_*` com a configuração do app Web do Firebase.
+3. No Firebase Console, ative Firestore e o provedor E-mail/senha em Authentication.
+4. Publique `firestore.rules` no Firestore Rules antes de usar o painel.
+5. Execute `npm run dev`.
 
-- **📺 Player TV (Exibição 16:9):**
-  - Layout dinâmico otimizado para ecrãs de alta resolução.
-  - Transições suaves e animações de zoom (*Ken Burns Effect*).
-  - Letreiro rotativo inferior (*Marquee*) para avisos, ofertas e dados de pagamento.
-  - Sincronização em tempo real (zero-refresh) entre o telemóvel e a TV.
+A TV abre em `/tv/<tenantId>` e o painel mobile em `/admin/<tenantId>`. A página inicial permite informar o identificador. O player só lê tenants ativos; as alterações exigem login e um vínculo de administrador.
 
-- **🏢 Arquitetura Multi-Tenant:**
-  - Código agnóstico preparado para revenda e personalização por cliente via `tenant_id`.
+## Criar contas e tenants
 
-## Executar e publicar
+Crie uma conta E-mail/senha no Firebase Authentication e copie seu UID. Os scripts usam o Firebase Admin SDK com Application Default Credentials, não expostas ao navegador:
 
-O player estático e o painel estão em `public/`. A aplicação usa também duas Netlify Functions:
+```powershell
+gcloud auth application-default login
+npm run create-tenant -- loja-nova --admin-uid=UID_DO_USUARIO
+```
 
-- `POST /api/login`: valida as credenciais e emite um token assinado.
-- `GET/PUT /api/state/:tenant`: lê e grava o conteúdo do tenant no banco Netlify.
+Para carregar os dados conhecidos do cliente usado como referência:
 
-Para que o login seguro e a sincronização entre dispositivos funcionem, publique o projeto na Netlify e habilite o Netlify DB no site. A sincronização em nuvem usa essa API; `localStorage` e `BroadcastChannel` complementam a persistência local e a atualização instantânea entre abas do mesmo navegador. Ao executar somente um servidor de arquivos estáticos, as funções não estarão disponíveis e o login/atualização em nuvem não funcionarão.
+```powershell
+npm run seed-tenant -- --admin-uid=UID_DO_USUARIO
+```
 
-Configure as variáveis de ambiente da Netlify:
+O script cria ou atualiza `tenants/gutemberg-lounge`, seus produtos e promoções. O `--admin-uid` é opcional; sem ele, crie o vínculo de administrador com um ambiente confiável antes de abrir o painel. Os scripts precisam de `NEXT_PUBLIC_FIREBASE_PROJECT_ID` no `.env.local` e de credenciais ADC com permissão de escrita no Firestore.
 
-| Variável | Uso | Padrão |
-| --- | --- | --- |
-| `ADMIN_USER` | Usuário do painel | `admin` |
-| `ADMIN_PASSWORD` | Senha do painel | `1234` |
-| `ADMIN_SESSION_SECRET` | Segredo aleatório para assinar sessões | Derivado do usuário e senha |
+## Estrutura Firestore
 
-Defina uma senha forte e um `ADMIN_SESSION_SECRET` próprio antes de publicar em produção. O QR code exibido na TV abre a URL do painel; ele não contém nem revela as credenciais.
+- Documento `tenants/{tenantId}`: configurações da identidade, cor, rodapé e nota geral do Google.
+- Subcoleções `produtos`, `promocoes`, `eventos`, `avaliacoes` e `anuncios_terceiros`.
+- Vínculos privados `tenant_admins/{tenantId}/users/{uid}`; as regras permitem ao usuário ler somente o próprio vínculo. O provisioning dos vínculos é feito pelo script com Admin SDK.
 
-Abra o player no endereço publicado para exibir na TV. Para acessar o painel, use o QR code da lateral ou abra `/?admin=1` no celular e entre com as credenciais configuradas. O painel grava os dados na nuvem, e o player consulta atualizações automaticamente sem recarregar a página.
+O `defaultTenant` em `lib/defaultSchema.js` é neutro e sem produtos, eventos ou avaliações. A página da TV escuta o documento e as subcoleções com `onSnapshot`; assinaturas e temporizadores são limpos ao sair. A persistência local do Firestore mantém os últimos dados sincronizados disponíveis durante uma interrupção de rede.
+
+## Publicação
+
+O build é `npm run build`. A configuração Netlify usa o framework adapter automático para Next.js. Defina as variáveis `NEXT_PUBLIC_FIREBASE_*` no ambiente de build e configure Firebase Authentication, Firestore Rules e o banco do projeto Firebase antes de publicar.
+
+## Verificação manual
+
+- **Tenant `gutemberg-lounge`:** depois de `npm run seed-tenant`, `/tv/gutemberg-lounge` exibe os três produtos, promoções laterais, cores, slogans e letreiro do conjunto migrado. A configuração conhecida não continha logo, eventos, anúncios ou avaliações individuais; esses campos permanecem vazios.
+- **Tenant em branco:** depois de criar um slug com `npm run create-tenant -- loja-nova --admin-uid=UID`, `/tv/loja-nova` exibe placeholders neutros sem erro.
+- **Tempo real:** com a TV aberta, edite um produto no Firestore Console ou no painel `/admin/loja-nova`; a atualização deve aparecer sem refresh.
+
+## Privacidade das configurações
+
+`.env.local` contém apenas a configuração pública do Firebase Web e é ignorado pelo Git. Os scripts usam ADC local; não salve chaves privadas ou contas de serviço no repositório.

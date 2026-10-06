@@ -2,14 +2,26 @@
   "name": "menu-indoor-signage",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "create-tenant": "node --env-file=.env.local scripts/createTenant.js",
+    "seed-tenant": "node --env-file=.env.local scripts/seedTenant.js"
+  },
   "dependencies": {
-    "@netlify/database": "^2.0.1",
-    "@netlify/functions": "^6.0.2",
-    "drizzle-orm": "^1.0.0-beta.22"
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.5.0",
+    "next": "^16.3.8",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
-    "drizzle-kit": "^1.0.0-beta.22",
-    "typescript": "^7.0.2"
+    "@tailwindcss/postcss": "^4.3.3",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.3.3"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.5"
   }
 }

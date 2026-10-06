@@ -3,3 +3,7 @@
 node_modules
 .playwright-mcp
 db/Attached Element Context from Integrated.txt
+.next
+out
+.env*
+!.env.example

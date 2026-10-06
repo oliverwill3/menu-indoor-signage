@@ -1,0 +1,35 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function tenantIsActive(tenantId) {
+      return exists(/databases/$(database)/documents/tenants/$(tenantId))
+        && get(/databases/$(database)/documents/tenants/$(tenantId)).data.configuracoes.ativo == true;
+    }
+
+    function isTenantAdmin(tenantId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/tenant_admins/$(tenantId)/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/tenant_admins/$(tenantId)/users/$(request.auth.uid)).data.ativo == true;
+    }
+
+    match /tenants/{tenantId} {
+      allow get: if !exists(/databases/$(database)/documents/tenants/$(tenantId))
+        || tenantIsActive(tenantId)
+        || isTenantAdmin(tenantId);
+      allow list: if tenantIsActive(tenantId) || isTenantAdmin(tenantId);
+      allow create, delete: if false;
+      allow update: if isTenantAdmin(tenantId);
+
+      match /{collectionName}/{documentId} {
+        allow read: if tenantIsActive(tenantId) || isTenantAdmin(tenantId);
+        allow create, update, delete: if isTenantAdmin(tenantId);
+      }
+    }
+
+    match /tenant_admins/{tenantId}/users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+  }
+}
