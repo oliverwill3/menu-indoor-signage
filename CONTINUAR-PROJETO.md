@@ -26,35 +26,27 @@ Finalizar uma aplicação multi-tenant de sinalização digital/cardápio:
 - Regras do Firestore publicadas.
 - `.env.local` existe localmente e está ignorado pelo Git. **Não compartilhar nem versionar esse arquivo.**
 - Provedor Firebase Auth **E-mail/senha** está ativo.
-- O usuário criou uma nova conta no Firebase Authentication com um e-mail funcional e já forneceu seu UID nesta conversa. Não reproduzir nem salvar o UID neste arquivo; falta vinculá-lo ao tenant.
-- Existe script para popular o tenant `gutemberg-lounge` com conteúdo demonstrativo.
-- A página inicial pública da Vercel abriu anteriormente; ainda falta validar o painel e a TV ligados ao Firestore em produção.
+- O novo usuário Auth do proprietário foi vinculado como administrador do tenant `gutemberg-lounge`. Não reproduzir nem salvar o UID neste arquivo.
+- `scripts/seedTenant.js` foi executado com sucesso e gravou as configurações, três produtos e duas promoções demonstrativas.
+- Login por Google Cloud CLI concluiu com sucesso. As Application Default Credentials ficaram localmente em `%APPDATA%\gcloud\application_default_credentials.json`; não copiar nem enviar esse arquivo.
+- Teste local confirmou que `/tv/gutemberg-lounge` lê e exibe os dados do Firestore. `/admin/gutemberg-lounge` abre o formulário de login.
+- O deploy público Vercel ainda falha porque não tem as variáveis públicas obrigatórias do Firebase configuradas.
 
 ## Pendências prioritárias
 
-1. Configurar credenciais locais de Firebase Admin para escrever no Firestore. Verificação recente: Firebase Admin SDK está instalado, mas `gcloud` CLI e Application Default Credentials não estão disponíveis. Instalar Google Cloud CLI, autenticar e executar:
-   ```powershell
-   gcloud auth application-default login
-   ```
-2. No terminal, na raiz do repositório, popular o tenant e autorizar o UID já fornecido pelo usuário:
-   ```powershell
-   npm run seed-tenant -- --admin-uid=UID_COPIADO
-   ```
-   O script usa o project ID de `.env.local`. Se a intenção for iniciar sem dados demonstrativos, em vez disso usar:
-   ```powershell
-   npm run create-tenant -- gutemberg-lounge --admin-uid=UID_COPIADO
-   ```
-   **Escolher apenas um comando**: o seed já cria/atualiza os dados do tenant; `create-tenant` cria um tenant vazio e falha se ele já existir.
-3. Validar no navegador:
+1. Fazer login na Vercel e configurar as variáveis de ambiente do projeto `menu-indoor-signage-9ze4`. São obrigatórias as seis variáveis `NEXT_PUBLIC_FIREBASE_*` mencionadas no erro da aplicação (`API_KEY`, `AUTH_DOMAIN`, `PROJECT_ID`, `STORAGE_BUCKET`, `MESSAGING_SENDER_ID`, `APP_ID`). Obter os valores do `.env.local` localmente; não colar em chat nem em commit. `NEXT_PUBLIC_FIREBASE_DATABASE_URL` não é necessária para o app, que usa Firestore.
+2. Fazer um novo deploy/redeploy Vercel após salvar as variáveis.
+3. Validar em produção:
    - `https://menu-indoor-signage-9ze4.vercel.app/admin/gutemberg-lounge`
    - `https://menu-indoor-signage-9ze4.vercel.app/tv/gutemberg-lounge`
-4. Se a aplicação publicada não conectar ao Firebase, cadastrar na Vercel as variáveis `NEXT_PUBLIC_FIREBASE_*` listadas em `.env.example` usando os valores do app Web Firebase e fazer redeploy. Nunca colocar valores secretos em commit ou neste arquivo.
+4. Fazer login no painel com o novo usuário Firebase Auth e verificar edição/gravação de um conteúdo de teste.
 5. Confirmar se o repositório está conectado à Vercel e se o deploy automático está habilitado.
 
 ## Cuidados e estado do Git
 
 - O `README.md` descreve configuração de publicação na Netlify, enquanto a URL da aplicação Next.js validada até agora é a Vercel; confirmar qual plataforma deve ser a publicação definitiva.
 - `.env.local` é privado; não imprimir seus valores em logs ou mensagens.
+- As Application Default Credentials são privadas e ficam fora do repositório em `%APPDATA%\gcloud\application_default_credentials.json`.
 - A URL antiga da Netlify não é a versão Next.js atual; a publicação da aplicação nova é a URL da Vercel acima.
 
 ## Arquivos úteis
