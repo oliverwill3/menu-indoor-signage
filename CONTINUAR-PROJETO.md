@@ -30,6 +30,7 @@ Finalizar uma aplicação multi-tenant de sinalização digital/cardápio:
 - `scripts/seedTenant.js` foi executado com sucesso e gravou as configurações, três produtos e duas promoções demonstrativas.
 - Login por Google Cloud CLI concluiu com sucesso. As Application Default Credentials ficaram localmente em `%APPDATA%\gcloud\application_default_credentials.json`; não copiar nem enviar esse arquivo.
 - Teste local confirmou que `/tv/gutemberg-lounge` lê e exibe os dados do Firestore. `/admin/gutemberg-lounge` abre o formulário de login.
+- A chave API local foi comparada com a configuração SDK do app Web MENU INDOOR e corresponde; um teste direto sem credenciais reais confirmou que Firebase Auth aceita essa chave. O erro `auth/api-key-not-valid` visto no browser ocorreu antes de reiniciar o servidor, portanto pode ter sido de um processo/configuração anterior. O servidor local foi parado conforme solicitado.
 - O deploy público Vercel ainda falha porque não tem as variáveis públicas obrigatórias do Firebase configuradas.
 
 ## Pendências prioritárias
@@ -39,14 +40,17 @@ Finalizar uma aplicação multi-tenant de sinalização digital/cardápio:
 3. Validar em produção:
    - `https://menu-indoor-signage-9ze4.vercel.app/admin/gutemberg-lounge`
    - `https://menu-indoor-signage-9ze4.vercel.app/tv/gutemberg-lounge`
-4. Fazer login no painel com o novo usuário Firebase Auth e verificar edição/gravação de um conteúdo de teste.
-5. Confirmar se o repositório está conectado à Vercel e se o deploy automático está habilitado.
+4. Depois de iniciar o servidor local (`npm run dev`), testar novamente o painel em `http://localhost:3000/admin/gutemberg-lounge` com o e-mail usado ao criar a conta Firebase Auth. O UID vinculado ao tenant não é uma credencial. Se o login falhar, registrar a mensagem exata/código Firebase e não compartilhar a senha.
+5. Como a senha apareceu parcialmente na tela compartilhada durante o diagnóstico, redefini-la no Firebase Authentication antes de continuar.
+6. Confirmar login, testar edição/gravação de conteúdo e validar que a TV atualiza em tempo real.
+7. Confirmar se o repositório está conectado à Vercel e se o deploy automático está habilitado.
 
 ## Cuidados e estado do Git
 
 - O `README.md` descreve configuração de publicação na Netlify, enquanto a URL da aplicação Next.js validada até agora é a Vercel; confirmar qual plataforma deve ser a publicação definitiva.
 - `.env.local` é privado; não imprimir seus valores em logs ou mensagens.
 - As Application Default Credentials são privadas e ficam fora do repositório em `%APPDATA%\gcloud\application_default_credentials.json`.
+- Nenhum servidor `next dev` deve estar rodando; foi encerrado a pedido do usuário.
 - A URL antiga da Netlify não é a versão Next.js atual; a publicação da aplicação nova é a URL da Vercel acima.
 
 ## Arquivos úteis
