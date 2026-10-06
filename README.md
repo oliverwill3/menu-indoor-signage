@@ -37,9 +37,19 @@ O script cria ou atualiza `tenants/gutemberg-lounge`, seus produtos e promoçõe
 
 O `defaultTenant` em `lib/defaultSchema.js` é neutro e sem produtos, eventos ou avaliações. A página da TV escuta o documento e as subcoleções com `onSnapshot`; assinaturas e temporizadores são limpos ao sair. A persistência local do Firestore mantém os últimos dados sincronizados disponíveis durante uma interrupção de rede.
 
-## Publicação
+## Publicação na Netlify
 
-O build é `npm run build`. A configuração Netlify usa o framework adapter automático para Next.js. Defina as variáveis `NEXT_PUBLIC_FIREBASE_*` no ambiente de build e configure Firebase Authentication, Firestore Rules e o banco do projeto Firebase antes de publicar.
+O build é `npm run build`; o adaptador oficial atual do Next.js é detectado pela Netlify sem plugin manual. `netlify.toml` fixa Node 22, compatível com Next.js 16.
+
+Para ativar deploy automático:
+
+1. Na Netlify, escolha **Add new project → Import an existing project**.
+2. Conecte o GitHub e selecione `oliverwill3/menu-indoor-signage`; defina `main` como production branch.
+3. Confira o comando de build `npm run build`. Não defina `public` como publish directory: esta aplicação usa o adaptador Next.js.
+4. Em **Project configuration → Environment variables**, adicione os sete valores do app Web Firebase listados em `.env.example`, incluindo `NEXT_PUBLIC_FIREBASE_DATABASE_URL`.
+5. Publique um deploy inicial. Os próximos pushes para `main` iniciam deploys automaticamente.
+
+As variáveis do app Web são embutidas no build do cliente; habilite as regras do Firestore e Firebase Authentication antes de disponibilizar os links públicos. Nunca coloque uma chave privada de service account nas variáveis `NEXT_PUBLIC_*`. Depois do deploy, use `/admin/<tenantId>` e `/tv/<tenantId>` no domínio `*.netlify.app` atribuído ao site.
 
 ## Verificação manual
 
