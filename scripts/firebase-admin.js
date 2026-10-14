@@ -1,17 +1,35 @@
-import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
+import { applicationDefault, cert, getApps, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 
-export function getAdminFirestore() {
+function getAdminApp() {
   const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
   if (!projectId) {
     throw new Error("Defina NEXT_PUBLIC_FIREBASE_PROJECT_ID no ambiente.");
   }
 
-  const app = getApps()[0] ?? initializeApp({
-    credential: applicationDefault(),
-    projectId,
-  });
-  return getFirestore(app);
+  const existingApp = getApps()[0];
+  if (existingApp) return existingApp;
+
+  const serializedCredentials = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  let credential = applicationDefault();
+  if (serializedCredentials) {
+    try {
+      credential = cert(JSON.parse(serializedCredentials));
+    } catch (error) {
+      throw new Error(`FIREBASE_SERVICE_ACCOUNT_JSON inválida: ${error.message}`);
+    }
+  }
+
+  return initializeApp({ credential, projectId });
+}
+
+export function getAdminAuth() {
+  return getAuth(getAdminApp());
+}
+
+export function getAdminFirestore() {
+  return getFirestore(getAdminApp());
 }
 
 export function parseTenantId(value) {
@@ -31,7 +49,9 @@ export async function grantTenantAdmin(db, tenantId, uid) {
   if (uid) {
     await db.doc(`tenant_admins/${tenantId}/users/${uid}`).set({
       ativo: true,
+      role: "owner",
+      isFirstAccess: false,
       criado_em: new Date(),
-    });
+    }, { merge: true });
   }
 }

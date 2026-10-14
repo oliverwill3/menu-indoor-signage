@@ -7,29 +7,49 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/tenants/$(tenantId)).data.configuracoes.ativo == true;
     }
 
-    function isTenantAdmin(tenantId) {
+    function hasTenantMembership(tenantId) {
       return request.auth != null
         && exists(/databases/$(database)/documents/tenant_admins/$(tenantId)/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/tenant_admins/$(tenantId)/users/$(request.auth.uid)).data.ativo == true;
+        && get(/databases/$(database)/documents/tenant_admins/$(tenantId)/users/$(request.auth.uid)).data.get('ativo', false) == true
+        && get(/databases/$(database)/documents/tenant_admins/$(tenantId)/users/$(request.auth.uid)).data.get('isFirstAccess', false) != true;
     }
 
     match /tenants/{tenantId} {
-      allow get: if !exists(/databases/$(database)/documents/tenants/$(tenantId))
-        || tenantIsActive(tenantId)
-        || isTenantAdmin(tenantId);
-      allow list: if tenantIsActive(tenantId) || isTenantAdmin(tenantId);
-      allow create, delete: if false;
-      allow update: if isTenantAdmin(tenantId);
+      allow get: if hasTenantMembership(tenantId);
+      allow list: if false;
+      allow create, update, delete: if false;
 
       match /{collectionName}/{documentId} {
-        allow read: if tenantIsActive(tenantId) || isTenantAdmin(tenantId);
-        allow create, update, delete: if isTenantAdmin(tenantId);
+        allow read, write: if false;
       }
     }
 
+    match /playlists/{tenantId} {
+      allow get: if tenantIsActive(tenantId);
+      allow list, create, update, delete: if false;
+    }
+
+    match /tenant_drafts/{tenantId} {
+      allow read, write: if false;
+    }
+
     match /tenant_admins/{tenantId}/users/{userId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false;
+      allow get: if request.auth != null && request.auth.uid == userId;
+      allow list, create, delete: if false;
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && resource.data.get('isFirstAccess', false) == true
+        && resource.data.invitedAt is timestamp
+        && request.auth.token.auth_time >= resource.data.invitedAt.seconds
+        && request.resource.data.isFirstAccess == false
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 80
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'isFirstAccess',
+          'displayName',
+          'firstAccessCompletedAt'
+        ]);
     }
   }
 }

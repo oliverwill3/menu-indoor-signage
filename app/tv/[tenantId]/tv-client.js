@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, doc, onSnapshot } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { createDefaultTenant } from "../../../lib/defaultSchema.js";
 import { getFirebaseFirestore } from "../../../src/lib/firebase.js";
 
-const COLLECTIONS = ["produtos", "promocoes", "eventos", "avaliacoes", "anuncios_terceiros"];
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 function sortByOrder(entries) {
@@ -69,19 +68,16 @@ export default function TvClient({ tenantId }) {
     }
 
     let active = true;
-    let childUnsubscribers = [];
     setLoading(true);
     setError("");
 
     try {
       const db = getFirebaseFirestore();
-      const tenantRef = doc(db, "tenants", tenantId);
-      const unsubscribeTenant = onSnapshot(tenantRef, (snapshot) => {
+      const playlistRef = doc(db, "playlists", tenantId);
+      const unsubscribePlaylist = onSnapshot(playlistRef, (snapshot) => {
         if (!active) return;
         if (!snapshot.exists()) {
-          childUnsubscribers.forEach((unsubscribe) => unsubscribe());
-          childUnsubscribers = [];
-          setExists(false);
+          setExists(true);
           setTenant(createDefaultTenant());
           setLoading(false);
           return;
@@ -96,34 +92,23 @@ export default function TvClient({ tenantId }) {
             ...createDefaultTenant().configuracoes,
             ...(data?.configuracoes ?? {}),
           },
+          produtos: sortByOrder(Array.isArray(data?.produtos) ? data.produtos : []),
+          promocoes: sortByOrder(Array.isArray(data?.promocoes) ? data.promocoes : []),
+          eventos: sortByOrder(Array.isArray(data?.eventos) ? data.eventos : []),
+          avaliacoes: Array.isArray(data?.avaliacoes) ? data.avaliacoes : [],
+          anuncios_terceiros: Array.isArray(data?.anuncios_terceiros) ? data.anuncios_terceiros : [],
+          telas: sortByOrder(Array.isArray(data?.telas) ? data.telas : []),
         }));
-
-        if (childUnsubscribers.length === 0) {
-          const pendingCollections = new Set(COLLECTIONS);
-          childUnsubscribers = COLLECTIONS.map((name) =>
-            onSnapshot(collection(db, "tenants", tenantId, name), (result) => {
-              if (!active) return;
-              const records = result.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
-              setTenant((current) => ({ ...current, [name]: sortByOrder(records) }));
-              pendingCollections.delete(name);
-              if (pendingCollections.size === 0) setLoading(false);
-            }, (snapshotError) => {
-              if (!active) return;
-              setError(`Não foi possível carregar ${name}: ${snapshotError.message}`);
-              setLoading(false);
-            })
-          );
-        }
+        setLoading(false);
       }, (snapshotError) => {
         if (!active) return;
-        setError(`Não foi possível conectar ao tenant: ${snapshotError.message}`);
+        setError(`Não foi possível conectar à playlist publicada: ${snapshotError.message}`);
         setLoading(false);
       });
 
       return () => {
         active = false;
-        unsubscribeTenant();
-        childUnsubscribers.forEach((unsubscribe) => unsubscribe());
+        unsubscribePlaylist();
       };
     } catch (firebaseError) {
       setError(firebaseError instanceof Error ? firebaseError.message : "Falha ao iniciar o Firebase.");
@@ -137,7 +122,35 @@ export default function TvClient({ tenantId }) {
     () => sortByOrder(tenant.produtos.filter((entry) => entry.ativo !== false)),
     [tenant.produtos]
   );
-  const promos = sortByOrder(tenant.promocoes.filter((entry) => entry.ativo !== false));
+  const slides = useMemo(() => {
+    const configuredScreens = tenant.telas ?? [];
+    const configuredSlides = configuredScreens
+      .filter((screen) => screen.ativo !== false)
+      .map((screen) => {
+        const linkedProduct = products.find((product) => product.id === screen.produtoId);
+        return {
+          ...(linkedProduct ?? {}),
+          ...screen,
+          nome: screen.titulo || linkedProduct?.nome || "",
+          descricao: screen.descricao || linkedProduct?.descricao || "",
+          imagem: screen.imagem || linkedProduct?.imagem || "",
+          preco: screen.preco || linkedProduct?.preco || "",
+        };
+      });
+    return configuredScreens.length ? configuredSlides : products;
+  }, [products, tenant.telas]);
+  const promos = useMemo(() => {
+    const manualPromos = tenant.promocoes.filter((entry) => entry.ativo !== false);
+    const productHighlights = products
+      .filter((product) => product.destaque === true || product.promocional === true)
+      .map((product) => ({
+        id: `product-${product.id}`,
+        nome: product.nome,
+        preco: product.preco,
+        ordem: product.ordem,
+      }));
+    return sortByOrder([...manualPromos, ...productHighlights]);
+  }, [products, tenant.promocoes]);
   const ads = tenant.anuncios_terceiros
     .filter((entry) => entry.ativo !== false && isAdInDateRange(entry));
   const tickerParts = useMemo(() => {
@@ -156,13 +169,19 @@ export default function TvClient({ tenantId }) {
 
   useEffect(() => {
     setSlideIndex(0);
-    if (products.length < 2) return undefined;
-    const interval = Math.min(60, Math.max(3, Number(settings.intervalo_slides) || 8)) * 1000;
+  }, [slides.length]);
+
+  useEffect(() => {
+    if (slides.length < 2) return undefined;
+    const intervalSeconds = Number(slides[slideIndex]?.tempo_exibicao)
+      || Number(settings.intervalo_slides)
+      || 8;
+    const interval = Math.min(60, Math.max(3, intervalSeconds)) * 1000;
     const timer = window.setInterval(() => {
-      setSlideIndex((current) => (current + 1) % products.length);
+      setSlideIndex((current) => (current + 1) % slides.length);
     }, interval);
     return () => window.clearInterval(timer);
-  }, [products.length, settings.intervalo_slides]);
+  }, [slideIndex, slides, settings.intervalo_slides]);
 
   if (loading) {
     return (
@@ -186,15 +205,16 @@ export default function TvClient({ tenantId }) {
     );
   }
 
-  const currentProduct = products[slideIndex];
   const logo = safeWebUrl(settings.logo);
+  const secondaryLogo = safeWebUrl(settings.logo_secundario);
   const tickerEntries = [
     ...(tickerParts.length ? tickerParts.map((text, index) => ({ id: `text-${index}`, text })) : [
       { id: "empty", text: "Avisos, eventos e avaliações aparecerão aqui" },
     ]),
     ...ads.map((ad) => ({ id: ad.id, ad })),
   ];
-  const currentMedia = safeWebUrl(currentProduct?.imagem);
+  const currentSlide = slides[slideIndex];
+  const currentMedia = safeWebUrl(currentSlide?.imagem);
 
   return (
     <TvLayout dadosTv={tenant}>
@@ -207,7 +227,10 @@ export default function TvClient({ tenantId }) {
               {settings.slogan ? <p>{settings.slogan}</p> : null}
             </div>
           </div>
-          {settings.slogan_secundario ? <p className="tv-header-note">{settings.slogan_secundario}</p> : null}
+          <div className="tv-header-brand-secondary">
+            {secondaryLogo ? <img className="tv-brand-logo-secondary" src={secondaryLogo} alt="" /> : null}
+            {settings.slogan_secundario ? <p className="tv-header-note">{settings.slogan_secundario}</p> : null}
+          </div>
         </header>
 
         <section className="tv-body">
@@ -216,13 +239,13 @@ export default function TvClient({ tenantId }) {
             style={currentMedia ? { backgroundImage: `linear-gradient(90deg, rgba(0,0,0,.82), rgba(0,0,0,.2)), url("${currentMedia}")` } : undefined}
             aria-live="polite"
           >
-            {currentProduct ? (
+            {currentSlide ? (
               <article className="tv-product-card">
-                {currentProduct.selo ? <span className="tv-product-badge">{currentProduct.selo}</span> : null}
-                <span className="eyebrow">{currentProduct.categoria || "CARDÁPIO"}</span>
-                <h2>{currentProduct.nome || "Produto sem nome"}</h2>
-                {currentProduct.descricao ? <p>{currentProduct.descricao}</p> : null}
-                <strong className="tv-price">{currentProduct.preco || "Consulte o preço"}</strong>
+                {currentSlide.selo ? <span className="tv-product-badge">{currentSlide.selo}</span> : null}
+                <span className="eyebrow">{currentSlide.categoria || "CARDÁPIO"}</span>
+                <h2>{currentSlide.nome || "Produto sem nome"}</h2>
+                {currentSlide.descricao ? <p>{currentSlide.descricao}</p> : null}
+                <strong className="tv-price">{currentSlide.preco || "Consulte o preço"}</strong>
               </article>
             ) : (
               <article className="tv-product-card tv-placeholder">
@@ -231,9 +254,9 @@ export default function TvClient({ tenantId }) {
                 <p>Adicione produtos pelo painel mobile para preencher esta área.</p>
               </article>
             )}
-            {products.length > 1 ? (
-              <div className="tv-slide-count" aria-label={`Produto ${slideIndex + 1} de ${products.length}`}>
-                {String(slideIndex + 1).padStart(2, "0")} / {String(products.length).padStart(2, "0")}
+            {slides.length > 1 ? (
+              <div className="tv-slide-count" aria-label={`Tela ${slideIndex + 1} de ${slides.length}`}>
+                {String(slideIndex + 1).padStart(2, "0")} / {String(slides.length).padStart(2, "0")}
               </div>
             ) : null}
           </div>

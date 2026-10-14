@@ -1,14 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import {
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  setDoc,
-} from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { doc, onSnapshot } from "firebase/firestore";
 import { getFirebaseAuth, getFirebaseFirestore } from "../../../src/lib/firebase.js";
 
 const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -54,6 +49,19 @@ const COLLECTIONS = {
       ordem: 1,
     }),
   },
+  telas: {
+    title: "Telas",
+    add: () => ({
+      titulo: "",
+      descricao: "",
+      imagem: "",
+      preco: "",
+      produtoId: "",
+      tempo_exibicao: 8,
+      ativo: true,
+      ordem: 1,
+    }),
+  },
 };
 
 function makeId() {
@@ -92,18 +100,23 @@ function SwitchField({ label, checked, onChange }) {
 }
 
 export default function AdminClient({ tenantId }) {
+  const router = useRouter();
   const [auth, setAuth] = useState(null);
   const [db, setDb] = useState(null);
   const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [authorized, setAuthorized] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   const [tenantExists, setTenantExists] = useState(false);
+  const [tenantLoaded, setTenantLoaded] = useState(false);
+  const [layoutConfigured, setLayoutConfigured] = useState(false);
+  const [publishedAt, setPublishedAt] = useState(null);
+  const [hasPublishedPlaylist, setHasPublishedPlaylist] = useState(false);
   const [settings, setSettings] = useState({});
   const [settingsDraft, setSettingsDraft] = useState({});
   const [entries, setEntries] = useState({});
   const [drafts, setDrafts] = useState({});
   const [tab, setTab] = useState("configuracoes");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -116,15 +129,19 @@ export default function AdminClient({ tenantId }) {
     }
     try {
       const firebaseAuth = getFirebaseAuth();
-      const firestore = getFirebaseFirestore();
       setAuth(firebaseAuth);
-      setDb(firestore);
+      setDb(getFirebaseFirestore());
       return onAuthStateChanged(firebaseAuth, (currentUser) => {
         setUser(currentUser);
+        setAuthReady(true);
         setAuthorized(false);
+        setCanEdit(false);
         setError("");
         setMessage("");
-      }, (authError) => setError(`Falha na autenticação: ${authError.message}`));
+      }, (authError) => {
+        setError(`Falha na autenticação: ${authError.message}`);
+        setAuthReady(true);
+      });
     } catch (firebaseError) {
       setError(firebaseError instanceof Error ? firebaseError.message : "Falha ao iniciar o Firebase.");
       return undefined;
@@ -132,59 +149,80 @@ export default function AdminClient({ tenantId }) {
   }, [validTenantId]);
 
   useEffect(() => {
+    if (authReady && !user && validTenantId) {
+      router.replace(`/login?tenantId=${encodeURIComponent(tenantId)}`);
+    }
+  }, [authReady, router, tenantId, user, validTenantId]);
+
+  useEffect(() => {
     if (!db || !user || !validTenantId) return undefined;
     return onSnapshot(
       doc(db, "tenant_admins", tenantId, "users", user.uid),
       (snapshot) => {
-        setAuthorized(snapshot.exists() && snapshot.data()?.ativo !== false);
+        const membership = snapshot.data();
+        const memberIsActive = snapshot.exists() && membership?.ativo !== false;
+        if (memberIsActive && membership?.isFirstAccess === true) {
+          router.replace(`/first-access?tenantId=${encodeURIComponent(tenantId)}`);
+          setAuthorized(false);
+          return;
+        }
+        setAuthorized(memberIsActive);
+        setCanEdit(["owner", "admin", "editor"].includes(membership?.role ?? "owner"));
         if (!snapshot.exists()) {
           setError("Esta conta ainda não tem permissão para administrar este tenant.");
+        } else if (membership?.ativo === false) {
+          setError("O acesso desta conta foi desativado.");
         } else {
           setError("");
         }
       },
       (snapshotError) => setError(`Falha ao verificar a permissão: ${snapshotError.message}`)
     );
-  }, [db, tenantId, user, validTenantId]);
+  }, [db, router, tenantId, user, validTenantId]);
 
   useEffect(() => {
-    if (!db || !user || !authorized || !validTenantId) return undefined;
+    if (!user || !authorized || !validTenantId) return undefined;
     let active = true;
-    const unsubscribers = [];
+    setTenantLoaded(false);
 
-    unsubscribers.push(onSnapshot(doc(db, "tenants", tenantId), (snapshot) => {
-      if (!active) return;
-      setTenantExists(snapshot.exists());
-      if (snapshot.exists()) {
-        const nextSettings = snapshot.data()?.configuracoes ?? {};
-        setSettings(nextSettings);
-        setSettingsDraft(nextSettings);
-      }
-    }, (snapshotError) => {
-      if (active) setError(`Falha ao ler as configurações: ${snapshotError.message}`);
-    }));
-
-    Object.keys(COLLECTIONS).forEach((name) => {
-      unsubscribers.push(onSnapshot(collection(db, "tenants", tenantId, name), (snapshot) => {
+    async function loadDraft() {
+      try {
+        const token = await user.getIdToken();
+        const response = await fetch(`/api/tenants/${encodeURIComponent(tenantId)}/playlist`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Falha ao carregar o tenant.");
         if (!active) return;
-        setEntries((current) => ({
-          ...current,
-          [name]: snapshot.docs
-            .map((entry) => ({ id: entry.id, ...entry.data() }))
-            .sort((left, right) => Number(left.ordem || 0) - Number(right.ordem || 0)),
-        }));
-      }, (snapshotError) => {
-        if (active) setError(`Falha ao ler ${COLLECTIONS[name].title}: ${snapshotError.message}`);
-      }));
-    });
 
+        const draftSettings = result.draft?.configuracoes ?? {};
+        setTenantExists(true);
+        setTenantLoaded(true);
+        setLayoutConfigured(result.layoutConfigurado === true);
+        setHasPublishedPlaylist(result.hasPublishedPlaylist === true);
+        setPublishedAt(result.publishedAt ?? null);
+        setSettings(draftSettings);
+        setSettingsDraft({
+          ...draftSettings,
+          avisos_rodape_texto: (draftSettings.avisos_rodape ?? []).join("\n"),
+        });
+        setEntries(Object.fromEntries(Object.keys(COLLECTIONS).map((name) => [name, result.draft?.[name] ?? []])));
+        setDrafts({});
+      } catch (loadError) {
+        if (active) {
+          setTenantLoaded(true);
+          setError(`Falha ao carregar o rascunho: ${loadError.message}`);
+        }
+      }
+    }
+
+    loadDraft();
     return () => {
       active = false;
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [authorized, db, tenantId, user, validTenantId]);
+  }, [authorized, tenantId, user, validTenantId]);
 
-  const emailIsValid = useMemo(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email), [email]);
   const visibleEntries = [
     ...(entries[tab] ?? []),
     ...Object.entries(drafts)
@@ -192,21 +230,6 @@ export default function AdminClient({ tenantId }) {
       .map(([, entry]) => entry)
       .filter((entry) => !(entries[tab] ?? []).some((saved) => saved.id === entry.id)),
   ];
-
-  async function handleLogin(event) {
-    event.preventDefault();
-    if (!auth) return;
-    setBusy(true);
-    setError("");
-    try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
-      setPassword("");
-    } catch (loginError) {
-      setError(`Não foi possível entrar: ${loginError.message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function handleLogout() {
     if (!auth) return;
@@ -222,26 +245,10 @@ export default function AdminClient({ tenantId }) {
     setSettingsDraft((current) => ({ ...current, [key]: value }));
   }
 
-  async function saveSettings(event) {
+  function saveSettings(event) {
     event.preventDefault();
-    if (!db) return;
-    setBusy(true);
     setError("");
-    try {
-      const notices = String(settingsDraft.avisos_rodape_texto ?? "")
-        .split(/\r?\n/)
-        .map((notice) => notice.trim())
-        .filter(Boolean);
-      const { avisos_rodape_texto: ignored, ...otherSettings } = settingsDraft;
-      await setDoc(doc(db, "tenants", tenantId), {
-        configuracoes: { ...otherSettings, avisos_rodape: notices },
-      }, { merge: true });
-      setMessage("Configurações salvas. A TV será atualizada automaticamente.");
-    } catch (saveError) {
-      setError(`Não foi possível salvar as configurações: ${saveError.message}`);
-    } finally {
-      setBusy(false);
-    }
+    setMessage("Alterações da moldura aplicadas ao rascunho local. Salve o rascunho para persistir.");
   }
 
   function addEntry(collectionName) {
@@ -260,41 +267,97 @@ export default function AdminClient({ tenantId }) {
     }));
   }
 
-  async function saveEntry(collectionName, entry) {
-    if (!db) return;
+  function saveEntry(collectionName, entry) {
     const key = entryKey(collectionName, entry.id);
     const data = drafts[key] ?? entry;
-    setBusy(true);
-    setError("");
-    try {
-      await setDoc(doc(db, "tenants", tenantId, collectionName, entry.id), data);
-      setDrafts((current) => {
-        const next = { ...current };
-        delete next[key];
-        return next;
-      });
-      setMessage(`${COLLECTIONS[collectionName].title} salvo. A TV está sincronizando.`);
-    } catch (saveError) {
-      setError(`Não foi possível salvar: ${saveError.message}`);
-    } finally {
-      setBusy(false);
-    }
+    setEntries((current) => ({
+      ...current,
+      [collectionName]: [
+        ...(current[collectionName] ?? []).filter((saved) => saved.id !== entry.id),
+        data,
+      ].sort((left, right) => Number(left.ordem || 0) - Number(right.ordem || 0)),
+    }));
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setMessage(`${COLLECTIONS[collectionName].title} atualizado no rascunho local. Salve o rascunho para persistir.`);
   }
 
-  async function removeEntry(collectionName, id) {
-    if (!db || !window.confirm("Remover este item?")) return;
+  function removeEntry(collectionName, id) {
+    if (!window.confirm("Remover este item do rascunho?")) return;
+    setEntries((current) => ({
+      ...current,
+      [collectionName]: (current[collectionName] ?? []).filter((entry) => entry.id !== id),
+    }));
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[entryKey(collectionName, id)];
+      return next;
+    });
+    setMessage("Item removido do rascunho local. Salve o rascunho para persistir.");
+  }
+
+  function makeDraftPayload() {
+    const notices = String(settingsDraft.avisos_rodape_texto ?? "")
+      .split(/\r?\n/)
+      .map((notice) => notice.trim())
+      .filter(Boolean);
+    const { avisos_rodape_texto: ignored, ativo: ignoredStatus, ...otherSettings } = settingsDraft;
+    const draft = {
+      configuracoes: { ...otherSettings, avisos_rodape: notices },
+    };
+
+    for (const collectionName of Object.keys(COLLECTIONS)) {
+      const items = new Map((entries[collectionName] ?? []).map((entry) => [entry.id, entry]));
+      Object.entries(drafts)
+        .filter(([key]) => key.startsWith(`${collectionName}/`))
+        .forEach(([, entry]) => items.set(entry.id, entry));
+      draft[collectionName] = [...items.values()]
+        .filter((entry) => entry._deleted !== true)
+        .map(({ _deleted, ...entry }) => entry)
+        .sort((left, right) => Number(left.ordem || 0) - Number(right.ordem || 0));
+    }
+    return draft;
+  }
+
+  async function persistPlaylist(action) {
+    if (!user || !canEdit || !tenantLoaded) return;
     setBusy(true);
     setError("");
+    setMessage("");
     try {
-      await deleteDoc(doc(db, "tenants", tenantId, collectionName, id));
-      setDrafts((current) => {
-        const next = { ...current };
-        delete next[entryKey(collectionName, id)];
-        return next;
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/tenants/${encodeURIComponent(tenantId)}/playlist`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action, draft: makeDraftPayload() }),
       });
-      setMessage("Item removido.");
-    } catch (deleteError) {
-      setError(`Não foi possível remover: ${deleteError.message}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Falha ao salvar a playlist.");
+
+      const savedDraft = result.draft;
+      setSettings(savedDraft.configuracoes);
+      setSettingsDraft({
+        ...savedDraft.configuracoes,
+        avisos_rodape_texto: (savedDraft.configuracoes.avisos_rodape ?? []).join("\n"),
+      });
+      setEntries(Object.fromEntries(Object.keys(COLLECTIONS).map((name) => [name, savedDraft[name] ?? []])));
+      setDrafts({});
+      setLayoutConfigured(result.layoutConfigurado === true);
+      if (result.published) {
+        setHasPublishedPlaylist(true);
+        setPublishedAt(result.publishedAt);
+        setMessage("Playlist publicada. A TV receberá a atualização pelo documento único.");
+      } else {
+        setMessage("Rascunho salvo sem alterar o conteúdo que está na TV.");
+      }
+    } catch (saveError) {
+      setError(`Não foi possível ${action === "publish" ? "publicar" : "salvar o rascunho"}: ${saveError.message}`);
     } finally {
       setBusy(false);
     }
@@ -308,17 +371,8 @@ export default function AdminClient({ tenantId }) {
     return (
       <main className="admin-shell">
         <section className="login-card">
-          <span className="eyebrow">PAINEL MOBILE</span>
-          <h1>Acesse sua mídia indoor</h1>
-          <p>Entre com a conta autorizada para o tenant <strong>{tenantId}</strong>.</p>
-          <form className="form-stack" onSubmit={handleLogin}>
-            <TextField label="E-mail" type="email" autoComplete="username" value={email} onChange={setEmail} required />
-            <TextField label="Senha" type="password" autoComplete="current-password" value={password} onChange={setPassword} required />
-            {error ? <p className="notice notice-error">{error}</p> : null}
-            <button className="button button-primary button-wide" disabled={busy || !emailIsValid} type="submit">
-              {busy ? "Entrando…" : "Entrar"}
-            </button>
-          </form>
+          <h1>Redirecionando para o login</h1>
+          <p>Aguarde enquanto abrimos o acesso seguro.</p>
         </section>
       </main>
     );
@@ -337,12 +391,23 @@ export default function AdminClient({ tenantId }) {
     );
   }
 
+  if (!tenantLoaded) {
+    return (
+      <main className="admin-shell">
+        <section className="login-card">
+          <h1>Carregando o painel</h1>
+          <p>Buscando o rascunho e a playlist publicada…</p>
+        </section>
+      </main>
+    );
+  }
+
   if (!tenantExists) {
     return (
       <main className="admin-shell">
         <section className="login-card">
-          <h1>Tenant não encontrado</h1>
-          <p>Crie primeiro este tenant no Firestore usando o script de provisionamento.</p>
+          <h1>{error ? "Não foi possível carregar a loja" : "Tenant não encontrado"}</h1>
+          <p>{error || "Crie primeiro este tenant no Firestore usando o script de provisionamento."}</p>
           <button className="button button-secondary" onClick={handleLogout} type="button">Sair</button>
         </section>
       </main>
@@ -350,8 +415,9 @@ export default function AdminClient({ tenantId }) {
   }
 
   const tabs = [
-    ["configuracoes", "Identidade"],
-    ["produtos", "Produtos"],
+    ["configuracoes", "Moldura em L"],
+    ["produtos", "Catálogo"],
+    ["telas", "Telas"],
     ["promocoes", "Promoções"],
     ["eventos", "Eventos"],
     ["avaliacoes", "Avaliações"],
@@ -369,6 +435,27 @@ export default function AdminClient({ tenantId }) {
         <button className="button button-secondary" onClick={handleLogout} type="button">Sair</button>
       </header>
 
+      <section className="publish-bar" aria-label="Estado da playlist">
+        <div>
+          <strong>{hasPublishedPlaylist ? "Playlist publicada" : "Ainda não publicada"}</strong>
+          <span>
+            {publishedAt
+              ? `Última publicação: ${new Date(publishedAt).toLocaleString("pt-BR")}`
+              : "As alterações ficam privadas até publicar."}
+          </span>
+        </div>
+        {canEdit ? (
+          <div className="publish-actions">
+            <button className="button button-secondary" disabled={busy || !tenantLoaded} onClick={() => persistPlaylist("saveDraft")} type="button">
+              {busy ? "Salvando…" : "Salvar rascunho"}
+            </button>
+            <button className="button button-primary" disabled={busy || !tenantLoaded} onClick={() => persistPlaylist("publish")} type="button">
+              {busy ? "Processando…" : "Publicar"}
+            </button>
+          </div>
+        ) : null}
+      </section>
+
       <nav className="admin-tabs" aria-label="Seções do painel">
         {tabs.map(([id, label]) => (
           <button
@@ -384,20 +471,28 @@ export default function AdminClient({ tenantId }) {
       </nav>
 
       {error ? <p className="notice notice-error">{error}</p> : null}
+      {!canEdit ? <p className="notice">Acesso somente para visualização.</p> : null}
       {message ? <p className="notice notice-success" role="status">{message}</p> : null}
+      {!tenantLoaded ? <p className="notice">Carregando dados e rascunho…</p> : null}
 
       {tab === "configuracoes" ? (
         <form className="editor-card form-stack" onSubmit={saveSettings}>
           <div className="section-title">
-            <div><h2>Identidade e rodapé</h2><p>Esses dados atualizam a tela da TV em tempo real.</p></div>
+            <div>
+              <h2>Configuração inicial da moldura em L</h2>
+              <p>{layoutConfigured ? "Estrutura bloqueada após o primeiro salvamento. Slogans e destaques continuam editáveis." : "Preencha a identidade fixa antes de salvar o primeiro rascunho."}</p>
+            </div>
           </div>
-          <TextField label="Nome do estabelecimento" value={settingsDraft.nome} onChange={(value) => updateDraftSettings("nome", value)} maxLength={80} />
-          <TextField label="URL do logo" type="url" value={settingsDraft.logo} onChange={(value) => updateDraftSettings("logo", value)} placeholder="https://" />
+          <TextField label="Nome do estabelecimento" value={settingsDraft.nome} onChange={(value) => updateDraftSettings("nome", value)} maxLength={80} required disabled={!canEdit || layoutConfigured} />
           <div className="field-grid">
-            <TextField label="Slogan principal" value={settingsDraft.slogan} onChange={(value) => updateDraftSettings("slogan", value)} maxLength={120} />
-            <TextField label="Slogan secundário" value={settingsDraft.slogan_secundario} onChange={(value) => updateDraftSettings("slogan_secundario", value)} maxLength={120} />
+            <TextField label="URL do logo 1" type="url" value={settingsDraft.logo} onChange={(value) => updateDraftSettings("logo", value)} placeholder="https://" required disabled={!canEdit || layoutConfigured} />
+            <TextField label="URL do logo 2" type="url" value={settingsDraft.logo_secundario} onChange={(value) => updateDraftSettings("logo_secundario", value)} placeholder="https://" required disabled={!canEdit || layoutConfigured} />
           </div>
-          <TextField label="Título da área lateral" value={settingsDraft.titulo_promocoes} onChange={(value) => updateDraftSettings("titulo_promocoes", value)} maxLength={80} />
+          <div className="field-grid">
+            <TextField label="Slogan principal" value={settingsDraft.slogan} onChange={(value) => updateDraftSettings("slogan", value)} maxLength={120} required disabled={!canEdit} />
+            <TextField label="Slogan secundário" value={settingsDraft.slogan_secundario} onChange={(value) => updateDraftSettings("slogan_secundario", value)} maxLength={120} required disabled={!canEdit} />
+          </div>
+          <TextField label="Título da área lateral" value={settingsDraft.titulo_promocoes} onChange={(value) => updateDraftSettings("titulo_promocoes", value)} maxLength={80} required disabled={!canEdit || layoutConfigured} />
           <label className="field">
             <span>Cor primária</span>
             <input
@@ -405,11 +500,12 @@ export default function AdminClient({ tenantId }) {
               type="color"
               value={settingsDraft.cor_primaria || "#6B7280"}
               onChange={(event) => updateDraftSettings("cor_primaria", event.target.value)}
+              disabled={!canEdit || layoutConfigured}
             />
           </label>
           <div className="field-grid">
-            <TextField label="Nota do Google" type="number" min="0" max="5" step="0.1" value={settingsDraft.nota_google?.nota} onChange={(value) => updateDraftSettings("nota_google", { ...settingsDraft.nota_google, nota: Number(value) })} />
-            <TextField label="Total de avaliações" type="number" min="0" value={settingsDraft.nota_google?.total} onChange={(value) => updateDraftSettings("nota_google", { ...settingsDraft.nota_google, total: Number(value) })} />
+            <TextField label="Nota do Google" type="number" min="0" max="5" step="0.1" value={settingsDraft.nota_google?.nota} onChange={(value) => updateDraftSettings("nota_google", { ...settingsDraft.nota_google, nota: Number(value) })} disabled={!canEdit || layoutConfigured} />
+            <TextField label="Total de avaliações" type="number" min="0" value={settingsDraft.nota_google?.total} onChange={(value) => updateDraftSettings("nota_google", { ...settingsDraft.nota_google, total: Number(value) })} disabled={!canEdit || layoutConfigured} />
           </div>
           <label className="field">
             <span>Avisos do rodapé (um por linha)</span>
@@ -418,18 +514,21 @@ export default function AdminClient({ tenantId }) {
               value={settingsDraft.avisos_rodape_texto ?? (settingsDraft.avisos_rodape ?? []).join("\n")}
               onChange={(event) => updateDraftSettings("avisos_rodape_texto", event.target.value)}
               maxLength={2000}
+              required={!layoutConfigured}
+              disabled={!canEdit || layoutConfigured}
             />
           </label>
-          <SwitchField label="TV ativa" checked={settingsDraft.ativo} onChange={(value) => updateDraftSettings("ativo", value)} />
-          <button className="button button-primary button-wide" disabled={busy} type="submit">
-            {busy ? "Salvando…" : "🚀 Salvar e atualizar TV"}
-          </button>
+          {canEdit ? (
+            <button className="button button-secondary button-wide" disabled={busy || layoutConfigured} type="submit">
+              Aplicar configuração inicial
+            </button>
+          ) : null}
         </form>
       ) : (
         <section className="editor-card">
           <div className="section-title">
-            <div><h2>{COLLECTIONS[tab].title}</h2><p>Salve cada item para sincronizar com a TV.</p></div>
-            <button className="button button-secondary" onClick={() => addEntry(tab)} type="button">＋ Adicionar</button>
+            <div><h2>{COLLECTIONS[tab].title}</h2><p>Edite o conteúdo e salve como rascunho; a TV muda somente após publicar.</p></div>
+            {canEdit ? <button className="button button-secondary" onClick={() => addEntry(tab)} type="button">＋ Adicionar</button> : null}
           </div>
           <div className="entry-list">
             {visibleEntries.map((entry) => {
@@ -439,8 +538,9 @@ export default function AdminClient({ tenantId }) {
                 <article className="entry-card" key={entry.id}>
                   <div className="entry-card-heading">
                     <h3>{current.nome || current.titulo || current.autor || "Novo item"}</h3>
-                    <button className="text-button danger-text" onClick={() => removeEntry(tab, entry.id)} type="button">Remover</button>
+                    {canEdit ? <button className="text-button danger-text" onClick={() => removeEntry(tab, entry.id)} type="button">Remover</button> : null}
                   </div>
+                  <fieldset className="admin-entry-fields" disabled={!canEdit}>
                   {tab === "produtos" ? (
                     <div className="form-stack">
                       <TextField label="Nome" value={current.nome} onChange={(value) => updateEntry(tab, current, "nome", value)} maxLength={100} />
@@ -507,14 +607,42 @@ export default function AdminClient({ tenantId }) {
                       <SwitchField label="Ativo" checked={current.ativo} onChange={(value) => updateEntry(tab, current, "ativo", value)} />
                     </div>
                   ) : null}
-                  <button className="button button-primary button-wide" disabled={busy} onClick={() => saveEntry(tab, current)} type="button">Salvar item</button>
+                  {tab === "telas" ? (
+                    <div className="form-stack">
+                      <label className="field">
+                        <span>Produto do catálogo (opcional)</span>
+                        <select
+                          value={current.produtoId ?? ""}
+                          onChange={(event) => updateEntry(tab, current, "produtoId", event.target.value)}
+                        >
+                          <option value="">Tela independente</option>
+                          {(entries.produtos ?? []).map((product) => (
+                            <option key={product.id} value={product.id}>{product.nome || product.id}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <TextField label="Título" value={current.titulo} onChange={(value) => updateEntry(tab, current, "titulo", value)} maxLength={120} />
+                      <TextField label="Descrição" value={current.descricao} onChange={(value) => updateEntry(tab, current, "descricao", value)} maxLength={500} />
+                      <div className="field-grid">
+                        <TextField label="URL da imagem" type="url" value={current.imagem} onChange={(value) => updateEntry(tab, current, "imagem", value)} placeholder="https://" />
+                        <TextField label="Preço ou chamada" value={current.preco} onChange={(value) => updateEntry(tab, current, "preco", value)} maxLength={40} />
+                      </div>
+                      <div className="field-grid">
+                        <TextField label="Duração (segundos)" type="number" min="3" max="60" value={current.tempo_exibicao} onChange={(value) => updateEntry(tab, current, "tempo_exibicao", Number(value))} />
+                        <TextField label="Ordem" type="number" min="0" value={current.ordem} onChange={(value) => updateEntry(tab, current, "ordem", Number(value))} />
+                      </div>
+                      <SwitchField label="Ativa" checked={current.ativo} onChange={(value) => updateEntry(tab, current, "ativo", value)} />
+                    </div>
+                  ) : null}
+                  </fieldset>
+                  {canEdit ? <button className="button button-primary button-wide" disabled={busy} onClick={() => saveEntry(tab, current)} type="button">Aplicar ao rascunho</button> : null}
                 </article>
               );
             })}
             {visibleEntries.length === 0 ? (
               <div className="empty-state">
                 <p>Nenhum item cadastrado.</p>
-                <button className="text-button" onClick={() => addEntry(tab)} type="button">Adicionar o primeiro</button>
+                {canEdit ? <button className="text-button" onClick={() => addEntry(tab)} type="button">Adicionar o primeiro</button> : null}
               </div>
             ) : null}
           </div>

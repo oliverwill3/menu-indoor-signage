@@ -96,7 +96,8 @@ textarea:focus-visible {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
   min-height: 48px;
   padding: 12px 14px;
@@ -118,6 +119,7 @@ textarea:focus-visible {
 
 .home-actions,
 .admin-header,
+.publish-bar,
 .section-title,
 .entry-card-heading {
   display: flex;
@@ -169,6 +171,35 @@ textarea:focus-visible {
 .button-wide {
   width: 100%;
   margin-top: 4px;
+}
+
+.publish-bar {
+  align-items: center;
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid #353d49;
+  border-radius: 14px;
+  background: #151922;
+}
+
+.publish-bar > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.publish-bar span {
+  color: #9ca3af;
+  font-size: 0.86rem;
+}
+
+.publish-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.publish-actions .button {
+  min-height: 40px;
+  padding: 8px 14px;
 }
 
 .admin-shell {
@@ -299,6 +330,14 @@ textarea:focus-visible {
   background: #10141b;
 }
 
+.admin-entry-fields {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .entry-card-heading h3 {
   margin: 0;
   font-size: 1rem;
@@ -404,6 +443,20 @@ textarea:focus-visible {
 .tv-header-note {
   margin: 0;
   text-align: right;
+}
+
+.tv-header-brand-secondary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1vw;
+}
+
+.tv-brand-logo-secondary {
+  width: 5vw;
+  height: 7vh;
+  object-fit: contain;
 }
 
 .tv-body {
@@ -681,6 +734,16 @@ textarea:focus-visible {
 
   .admin-header {
     align-items: flex-start;
+  }
+
+  .publish-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .publish-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
   .admin-header .button {
