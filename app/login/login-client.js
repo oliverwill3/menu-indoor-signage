@@ -2,7 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import {
+  GoogleAuthProvider,
+  linkWithPopup,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  unlink,
+} from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { getFirebaseAuth, getFirebaseFirestore } from "../../src/lib/firebase.js";
 
@@ -77,6 +85,79 @@ export default function LoginClient({ initialTenantId }) {
     }
   }
 
+  async function handleSuperAdminLogin() {
+    if (!tenantIdIsValid) {
+      setError("Informe um identificador de loja válido.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const auth = getFirebaseAuth();
+      const provider = new GoogleAuthProvider();
+      const currentUser = auth.currentUser;
+      const expectedEmail = email.trim().toLowerCase();
+      provider.setCustomParameters({ prompt: "select_account" });
+
+      if (expectedEmail && password && currentUser?.email?.toLowerCase() !== expectedEmail) {
+        await signInWithEmailAndPassword(auth, expectedEmail, password);
+        setPassword("");
+        setMessage("Conta autenticada. Clique novamente para vinculá-la à mesma Conta Google.");
+        return;
+      }
+
+      if (
+        expectedEmail
+        && currentUser?.email?.toLowerCase() === expectedEmail
+        && !currentUser.providerData.some(({ providerId }) => providerId === "google.com")
+      ) {
+        const linkedCredentials = await linkWithPopup(currentUser, provider);
+        const linkedGoogleEmail = linkedCredentials.user.providerData
+          .find(({ providerId }) => providerId === "google.com")
+          ?.email?.trim().toLowerCase();
+        if (linkedGoogleEmail !== expectedEmail) {
+          await unlink(linkedCredentials.user, "google.com");
+          throw new Error("Selecione a Conta Google que usa o mesmo e-mail da conta autorizada.");
+        }
+        setMessage("Conta Google vinculada. Clique novamente para entrar como SuperAdmin.");
+        return;
+      }
+
+      const credentials = await signInWithPopup(auth, provider);
+      const googleEmail = credentials.user.providerData
+        .find(({ providerId }) => providerId === "google.com")
+        ?.email?.trim().toLowerCase() ?? "";
+      if (expectedEmail && googleEmail !== expectedEmail) {
+        await signOut(auth);
+        throw new Error("A Conta Google selecionada não corresponde ao e-mail informado.");
+      }
+
+      const idToken = await credentials.user.getIdToken(true);
+      const response = await fetch("/api/auth/super-admin/bootstrap", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || "Esta Conta Google não está autorizada como SuperAdmin.");
+      }
+
+      await credentials.user.getIdToken(true);
+      router.replace(`/admin/${encodeURIComponent(tenantId.trim())}`);
+    } catch (loginError) {
+      if (loginError.code === "auth/account-exists-with-different-credential") {
+        setError("Esta conta já usa e-mail e senha. Entre primeiro com ela, depois volte a esta tela para vincular a mesma Conta Google.");
+      } else {
+        setError(`Não foi possível entrar como SuperAdmin: ${loginError.message}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="admin-shell">
       <section className="login-card">
@@ -90,7 +171,7 @@ export default function LoginClient({ initialTenantId }) {
               autoComplete="organization"
               value={tenantId}
               onChange={(event) => setTenantId(event.target.value.toLowerCase())}
-              pattern="[a-z0-9][a-z0-9-]{0,62}"
+              pattern="[a-z0-9][a-z0-9\-]{0,62}"
               required
             />
           </label>
@@ -122,6 +203,9 @@ export default function LoginClient({ initialTenantId }) {
         </form>
         <button className="text-button" disabled={busy} onClick={handlePasswordReset} type="button">
           Esqueci minha senha
+        </button>
+        <button className="button button-secondary button-wide" disabled={busy || !tenantIdIsValid} onClick={handleSuperAdminLogin} type="button">
+          {busy ? "Validando…" : "Entrar como SuperAdmin com Google"}
         </button>
       </section>
     </main>

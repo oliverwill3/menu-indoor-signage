@@ -156,28 +156,59 @@ export default function AdminClient({ tenantId }) {
 
   useEffect(() => {
     if (!db || !user || !validTenantId) return undefined;
-    return onSnapshot(
-      doc(db, "tenant_admins", tenantId, "users", user.uid),
-      (snapshot) => {
-        const membership = snapshot.data();
-        const memberIsActive = snapshot.exists() && membership?.ativo !== false;
-        if (memberIsActive && membership?.isFirstAccess === true) {
-          router.replace(`/first-access?tenantId=${encodeURIComponent(tenantId)}`);
-          setAuthorized(false);
+    let active = true;
+    let unsubscribe;
+
+    async function authorizeUser() {
+      try {
+        const token = await user.getIdTokenResult();
+        const isSuperAdmin = token.claims.role === "superAdmin"
+          && token.claims.email_verified === true
+          && token.claims.firebase?.sign_in_provider === "google.com";
+        if (!active) return;
+        if (isSuperAdmin) {
+          setAuthorized(true);
+          setCanEdit(true);
+          setError("");
           return;
         }
-        setAuthorized(memberIsActive);
-        setCanEdit(["owner", "admin", "editor"].includes(membership?.role ?? "owner"));
-        if (!snapshot.exists()) {
-          setError("Esta conta ainda não tem permissão para administrar este tenant.");
-        } else if (membership?.ativo === false) {
-          setError("O acesso desta conta foi desativado.");
-        } else {
-          setError("");
+
+        unsubscribe = onSnapshot(
+          doc(db, "tenant_admins", tenantId, "users", user.uid),
+          (snapshot) => {
+            const membership = snapshot.data();
+            const memberIsActive = snapshot.exists() && membership?.ativo === true;
+            if (memberIsActive && membership?.isFirstAccess === true) {
+              router.replace(`/first-access?tenantId=${encodeURIComponent(tenantId)}`);
+              setAuthorized(false);
+              return;
+            }
+            setAuthorized(memberIsActive);
+            setCanEdit(["owner", "admin", "editor"].includes(membership?.role ?? "owner"));
+            if (!snapshot.exists()) {
+              setError("Esta conta ainda não tem permissão para administrar este tenant.");
+            } else if (!memberIsActive) {
+              setError("O acesso desta conta foi desativado.");
+            } else {
+              setError("");
+            }
+          },
+          (snapshotError) => setError(`Falha ao verificar a permissão: ${snapshotError.message}`)
+        );
+      } catch (authError) {
+        if (active) {
+          setAuthorized(false);
+          setCanEdit(false);
+          setError(`Falha ao verificar a permissão: ${authError.message}`);
         }
-      },
-      (snapshotError) => setError(`Falha ao verificar a permissão: ${snapshotError.message}`)
-    );
+      }
+    }
+
+    authorizeUser();
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
   }, [db, router, tenantId, user, validTenantId]);
 
   useEffect(() => {

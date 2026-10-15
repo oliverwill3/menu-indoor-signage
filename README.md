@@ -6,15 +6,15 @@ Aplicação Next.js com player de TV por tenant, painel autenticado e playlists 
 
 1. Instale as dependências com `npm install`.
 2. Copie `.env.example` para `.env.local` e preencha as variáveis `NEXT_PUBLIC_FIREBASE_*` com a configuração do app Web do Firebase.
-3. No Firebase Console, ative Firestore e o provedor E-mail/senha em Authentication.
+3. No Firebase Console, ative Firestore e os provedores E-mail/senha e Anônimo em Authentication.
 4. Publique `firestore.rules` no Firestore Rules antes de usar o painel.
 5. Execute `npm run dev`.
 
-A TV abre em `/tv/<tenantId>`. O acesso administrativo é unificado em `/login` (com o identificador da loja) e o painel fica em `/admin/<tenantId>`. Contas marcadas com `isFirstAccess: true` são encaminhadas a `/first-access` para definir senha e nome antes de acessar os dados. O painel salva alterações em `tenant_drafts/{tenantId}` e só atualiza a TV ao publicar `playlists/{tenantId}`.
+O modo de teste da TV abre em `/tv/<tenantId>`. O acesso administrativo é unificado em `/login` (com o identificador da loja) e o painel fica em `/admin/<tenantId>`. Contas marcadas com `isFirstAccess: true` são encaminhadas a `/first-access` para definir senha e nome antes de acessar os dados. O painel salva alterações em `tenant_drafts/{tenantId}` e só atualiza a TV ao publicar `playlists/{tenantId}`. A leitura do tenant exige um vínculo administrativo válido ou um dispositivo autenticado e pareado.
 
 ## Criar contas e tenants
 
-Crie uma conta E-mail/senha no Firebase Authentication e copie seu UID. Os scripts e as rotas de publicação usam o Firebase Admin SDK com Application Default Credentials localmente, não expostas ao navegador:
+Crie uma conta E-mail/senha no Firebase Authentication e copie seu UID. Os scripts atribuem as custom claims `role: tenantAdmin` e `tenantId` e criam o documento de vínculo; não compartilhe contas SuperAdmin e de lojista. Os scripts e as rotas de publicação usam o Firebase Admin SDK com Application Default Credentials localmente, não expostas ao navegador:
 
 ```powershell
 gcloud auth application-default login
@@ -31,18 +31,22 @@ O script cria ou atualiza `tenants/gutemberg-lounge`, seus produtos e promoçõe
 
 Em um host serverless sem ADC (por exemplo Vercel), configure `FIREBASE_SERVICE_ACCOUNT_JSON` como variável privada contendo a credencial JSON da service account com acesso ao Firestore e Firebase Auth. Nunca use o prefixo `NEXT_PUBLIC_` para essa variável. O mesmo valor pode ser definido no `.env.local` para desenvolvimento, mas ADC é preferível localmente.
 
+O acesso SuperAdmin usa Conta Google verificada e a allowlist privada `SUPER_ADMIN_EMAILS` (lista de e-mails separada por vírgulas). Após configurar ambas as variáveis no ambiente de produção, entre em `/login` com a Conta Google allowlisted e selecione “Entrar como SuperAdmin com Google”; para uma conta existente de e-mail/senha, entre nela primeiro e vincule a mesma Conta Google. A claim só é atribuída pelo servidor após validar provedor, verificação do e-mail e allowlist. As regras do Firestore também recusam sessões SuperAdmin autenticadas por senha.
+
 ## Estrutura Firestore
 
-- Documento `tenants/{tenantId}`: identidade e status comercial administrados pelo servidor.
-- Documento `tenant_drafts/{tenantId}`: configuração, catálogo e telas em edição; somente rotas autenticadas com papel editor ou superior acessam o conteúdo.
-- Documento `playlists/{tenantId}`: snapshot único publicado com moldura, catálogo, telas, promoções, eventos, avaliações e anúncios. O player faz uma única inscrição `onSnapshot` neste documento; clientes podem apenas lê-lo quando o tenant está ativo. Toda escrita passa pela rota autenticada do Firebase Admin SDK.
-- Subcoleções legadas de conteúdo em `tenants/{tenantId}` são lidas no servidor somente para inicializar o primeiro rascunho de tenants já existentes; as regras negam acesso direto do cliente.
-- Vínculos privados `tenant_admins/{tenantId}/users/{uid}`; as regras permitem ao usuário ler somente o próprio vínculo e aceitam os papéis `owner`, `admin`, `editor` e `viewer`. O provisioning dos vínculos é feito pelo script com Admin SDK.
+- Documento `tenants/{tenantId}`: identidade e status comercial privados, lidos somente pelo SuperAdmin ou pelo administrador daquele tenant.
+- Documento `tenant_drafts/{tenantId}`: configuração, catálogo e telas em edição; nunca legíveis por dispositivos da TV.
+- Documento `playlists/{tenantId}`: snapshot único publicado com moldura, catálogo, telas, promoções, eventos, avaliações e anúncios. Só o SuperAdmin, o administrador autenticado daquele tenant ou um dispositivo autenticado e vinculado podem ler; o cliente não pode escrever.
+- Documento global `platform/mediaPlaylist`: mídia própria da plataforma, sem dados de tenant; qualquer sessão autenticada, inclusive uma TV anônima, pode ler. Escritas ficam no Admin SDK.
+- `devices/{deviceId}`: identidade da sessão anônima da TV, código temporário de pareamento, tenant vinculado e estado. O dispositivo pode criar e ler somente seu próprio registro não vinculado; apenas o servidor altera vínculo, estado e código.
+- Vínculos privados `tenant_admins/{tenantId}/users/{uid}`: o usuário lê seu vínculo; criação e gestão usam Admin SDK. Claims `role` e `tenantId` são conferidas junto ao vínculo.
+- `audit_logs/{logId}`: trilha de auditoria gravada pelo servidor e legível pelo SuperAdmin.
 - A conclusão do primeiro acesso requer `isFirstAccess: true`, `invitedAt` e autenticação posterior ao convite. A emissão e o envio dos convites serão ligados ao onboarding do SuperAdmin na etapa 5.
 
 Na primeira configuração, informe nome, dois logos, dois slogans, título dos destaques e pelo menos um aviso. O primeiro salvamento do rascunho trava os campos estruturais do L; slogans e destaques continuam editáveis. As alterações do catálogo e das telas permanecem privadas até **Publicar**. A rota rejeita uma publicação que ultrapasse o tamanho seguro de um documento Firestore.
 
-O `defaultTenant` em `lib/defaultSchema.js` é neutro. A TV escuta somente a playlist publicada e limpa a inscrição e o temporizador ao sair. A persistência local do Firestore mantém a última playlist lida disponível durante uma interrupção de rede.
+O `defaultTenant` em `lib/defaultSchema.js` é neutro. `npm run seed-tenant` cria ou atualiza o rascunho e o snapshot inicial publicado, além dos documentos legados de compatibilidade. As regras não tornam os dados do tenant públicos: sessões anônimas sem vínculo não podem ler a playlist publicada.
 
 ## Publicação na Netlify
 
@@ -63,6 +67,12 @@ As variáveis do app Web são embutidas no build do cliente; habilite as regras 
 - **Tenant `gutemberg-lounge`:** depois de `npm run seed-tenant`, abra `/admin/gutemberg-lounge`, configure o segundo logo e a moldura, salve o rascunho, edite produtos/telas e publique. A TV só muda depois da publicação.
 - **Tenant em branco:** depois de criar um slug com `npm run create-tenant -- loja-nova --admin-uid=UID`, complete a configuração obrigatória da moldura no painel antes de salvar o primeiro rascunho.
 - **Tempo real:** deixe `/tv/<tenantId>` aberto e publique uma playlist no painel. A atualização deve chegar pelo único documento sem refresh nem leitura das subcoleções.
+
+## Testes com os emuladores Firebase
+
+Instale um JDK compatível e deixe o comando `java` disponível no `PATH`; o Firebase Emulator Suite precisa do Java para iniciar o Firestore Emulator. Execute `npm run test:emulators` para iniciar Auth e Firestore com o projeto isolado `demo-menu-indoor` e rodar `node --test`.
+
+Os testes não carregam `.env.local` nem usam credenciais reais. A inicialização sem credenciais só é permitida em `NODE_ENV=test`, com `FIREBASE_ADMIN_ALLOW_EMULATOR_NO_CREDENTIALS=true` e os endpoints dos emuladores Auth e Firestore definidos. Testes de unidade sem emuladores podem ser executados com `npm test`.
 
 ## Privacidade das configurações
 

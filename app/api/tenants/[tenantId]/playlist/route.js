@@ -1,5 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
-import { getAdminAuth, getAdminFirestore, parseTenantId } from "../../../../../scripts/firebase-admin.js";
+import { getAdminFirestore, parseTenantId } from "../../../../../lib/server/firebase-admin.js";
+import { requireAuth } from "../../../../../lib/server/requireAuth.js";
+import { ApiError, handleRouteError } from "../../../../../lib/server/route-errors.js";
 
 export const runtime = "nodejs";
 
@@ -33,13 +35,11 @@ const DEFAULT_SETTINGS = {
   intervalo_slides: 8,
 };
 const MAX_DOCUMENT_BYTES = 900_000;
+const DEFAULT_ADS_EVERY = 4;
+const DEFAULT_ADS_EVERY_GRACE = 2;
+const DEFAULT_GRACE_PERIOD_DAYS = 7;
 
-class RouteError extends Error {
-  constructor(message, status) {
-    super(message);
-    this.status = status;
-  }
-}
+class RouteError extends ApiError {}
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -92,7 +92,10 @@ function normalizeCollection(collectionName, value) {
 
   return entries.map((entry) => {
     if (!isRecord(entry)) throw new RouteError(`Há um item inválido em ${collectionName}.`, 400);
-    const normalized = { id: safeId(entry.id), ordem: Number.isFinite(Number(entry.ordem)) ? Number(entry.ordem) : 0 };
+    const normalized = {
+      id: safeId(entry.id),
+      ordem: Number.isFinite(Number(entry.ordem)) ? Number(entry.ordem) : 0,
+    };
     const copyText = (key, maxLength = 500) => {
       if (entry[key] !== undefined) normalized[key] = text(entry[key], maxLength);
     };
@@ -101,7 +104,9 @@ function normalizeCollection(collectionName, value) {
     };
 
     if (collectionName === "produtos") {
-      for (const key of ["nome", "descricao", "categoria", "preco", "preco_anterior", "imagem", "selo"]) copyText(key, key === "descricao" ? 500 : 2048);
+      for (const key of ["nome", "descricao", "categoria", "preco", "preco_anterior", "imagem", "selo"]) {
+        copyText(key, key === "descricao" ? 500 : 2048);
+      }
       copyBoolean("ativo", true);
       copyBoolean("destaque");
       copyBoolean("promocional");
@@ -120,7 +125,9 @@ function normalizeCollection(collectionName, value) {
     } else if (collectionName === "avaliacoes") {
       copyText("autor", 80);
       copyText("texto", 500);
-      normalized.nota = Number.isFinite(Number(entry.nota)) ? Math.min(5, Math.max(1, Number(entry.nota))) : 5;
+      normalized.nota = Number.isFinite(Number(entry.nota))
+        ? Math.min(5, Math.max(1, Number(entry.nota)))
+        : 5;
     } else if (collectionName === "anuncios_terceiros") {
       copyText("imagem", 2048);
       copyText("link", 2048);
@@ -131,7 +138,9 @@ function normalizeCollection(collectionName, value) {
         ? Math.min(60, Math.max(3, Number(entry.tempo_exibicao)))
         : 8;
     } else if (collectionName === "telas") {
-      for (const key of ["titulo", "descricao", "imagem", "preco", "produtoId"]) copyText(key, key === "descricao" ? 500 : 2048);
+      for (const key of ["titulo", "descricao", "imagem", "preco", "produtoId"]) {
+        copyText(key, key === "descricao" ? 500 : 2048);
+      }
       copyBoolean("ativo", true);
       normalized.tempo_exibicao = Number.isFinite(Number(entry.tempo_exibicao))
         ? Math.min(60, Math.max(3, Number(entry.tempo_exibicao)))
@@ -197,35 +206,6 @@ function toIsoDate(value) {
   return value?.toDate instanceof Function ? value.toDate().toISOString() : null;
 }
 
-async function authorize(request, tenantId, requireEditor = false) {
-  const authorization = request.headers.get("authorization") || "";
-  const token = authorization.match(/^Bearer ([^\s]+)$/)?.[1];
-  if (!token) return { response: Response.json({ error: "Autenticação necessária." }, { status: 401 }) };
-
-  const auth = getAdminAuth();
-  const db = getAdminFirestore();
-  let decoded;
-  try {
-    decoded = await auth.verifyIdToken(token, true);
-  } catch {
-    return { response: Response.json({ error: "Sessão inválida ou expirada." }, { status: 401 }) };
-  }
-
-  const [tenant, membership] = await Promise.all([
-    db.doc(`tenants/${tenantId}`).get(),
-    db.doc(`tenant_admins/${tenantId}/users/${decoded.uid}`).get(),
-  ]);
-  if (!tenant.exists || !membership.exists || membership.data()?.ativo === false || membership.data()?.isFirstAccess === true) {
-    return { response: Response.json({ error: "Acesso não autorizado para esta loja." }, { status: 403 }) };
-  }
-
-  const role = membership.data()?.role ?? "owner";
-  if (requireEditor && !["owner", "admin", "editor"].includes(role)) {
-    return { response: Response.json({ error: "Seu perfil não pode alterar a playlist." }, { status: 403 }) };
-  }
-  return { db, uid: decoded.uid, tenant };
-}
-
 async function loadDraft(db, tenantId, tenant) {
   const draftRef = db.doc(`tenant_drafts/${tenantId}`);
   const playlistRef = db.doc(`playlists/${tenantId}`);
@@ -287,15 +267,17 @@ export async function GET(request, { params }) {
   try {
     const { tenantId: routeTenantId } = await params;
     const tenantId = parseTenantId(routeTenantId);
-    const authorization = await authorize(request, tenantId);
-    if (authorization.response) return authorization.response;
-    return Response.json(await loadDraft(authorization.db, tenantId, authorization.tenant));
+    await requireAuth(request, {
+      roles: ["tenantAdmin", "superAdmin"],
+      tenantId,
+      requireActiveTenant: false,
+    });
+    const db = getAdminFirestore();
+    const tenant = await db.doc(`tenants/${tenantId}`).get();
+    if (!tenant.exists) throw new RouteError("Esta loja não existe.", 404);
+    return Response.json(await loadDraft(db, tenantId, tenant));
   } catch (error) {
-    if (error.message?.includes("tenantId inválido")) {
-      return Response.json({ error: error.message }, { status: 400 });
-    }
-    console.error("Falha ao carregar rascunho da playlist.", error);
-    return Response.json({ error: "Não foi possível carregar o rascunho." }, { status: 500 });
+    return handleRouteError(error, "Falha ao carregar rascunho da playlist.");
   }
 }
 
@@ -303,26 +285,30 @@ export async function POST(request, { params }) {
   try {
     const { tenantId: routeTenantId } = await params;
     const tenantId = parseTenantId(routeTenantId);
-    const authorization = await authorize(request, tenantId, true);
-    if (authorization.response) return authorization.response;
+    const principal = await requireAuth(request, {
+      roles: ["tenantAdmin", "superAdmin"],
+      tenantId,
+    });
 
     const rawBody = await request.text();
     if (Buffer.byteLength(rawBody, "utf8") > MAX_DOCUMENT_BYTES + 20_000) {
-      return Response.json({ error: "O rascunho enviado é grande demais." }, { status: 413 });
+      throw new RouteError("O rascunho enviado é grande demais.", 413);
     }
 
     let body;
     try {
       body = JSON.parse(rawBody);
     } catch {
-      return Response.json({ error: "O corpo da solicitação precisa ser JSON válido." }, { status: 400 });
+      throw new RouteError("O corpo da solicitação precisa ser JSON válido.", 400);
     }
     if (!isRecord(body) || !["saveDraft", "publish"].includes(body.action)) {
-      return Response.json({ error: "Ação de playlist inválida." }, { status: 400 });
+      throw new RouteError("Ação de playlist inválida.", 400);
     }
+
     const draft = normalizeDraft(body.draft);
     if (body.action === "publish") validatePublishableContent(draft);
-    const db = authorization.db;
+
+    const db = getAdminFirestore();
     const draftRef = db.doc(`tenant_drafts/${tenantId}`);
     const playlistRef = db.doc(`playlists/${tenantId}`);
     const tenantRef = db.doc(`tenants/${tenantId}`);
@@ -331,10 +317,33 @@ export async function POST(request, { params }) {
       const publishedPlaylist = await transaction.get(playlistRef);
       const tenant = await transaction.get(tenantRef);
       if (!tenant.exists) throw new RouteError("Tenant não encontrado.", 409);
+      const tenantData = tenant.data() ?? {};
+      if (principal.role === "tenantAdmin" && tenantData.ativo !== true) {
+        throw new RouteError("Esta loja está desativada.", 403);
+      }
+      if (!["active", "grace", "overdue"].includes(tenantData.subscriptionStatus)) {
+        throw new RouteError("O tenant precisa ter um subscriptionStatus válido antes da publicação.", 409);
+      }
+      const adsEvery = tenantData.adsEvery === undefined ? DEFAULT_ADS_EVERY : tenantData.adsEvery;
+      if (!Number.isInteger(adsEvery) || adsEvery < 0) {
+        throw new RouteError("O campo adsEvery precisa ser um inteiro igual ou maior que zero.", 409);
+      }
+      const adsEveryGrace = tenantData.adsEveryGrace === undefined
+        ? DEFAULT_ADS_EVERY_GRACE
+        : tenantData.adsEveryGrace;
+      if (!Number.isInteger(adsEveryGrace) || adsEveryGrace < 0) {
+        throw new RouteError("O campo adsEveryGrace precisa ser um inteiro igual ou maior que zero.", 409);
+      }
+      const gracePeriodDays = tenantData.gracePeriodDays === undefined
+        ? DEFAULT_GRACE_PERIOD_DAYS
+        : tenantData.gracePeriodDays;
+      if (!Number.isInteger(gracePeriodDays) || gracePeriodDays < 0) {
+        throw new RouteError("O campo gracePeriodDays precisa ser um inteiro igual ou maior que zero.", 409);
+      }
 
       const previousDraft = existingDraft.exists ? existingDraft.data() : null;
       const previousPublished = publishedPlaylist.exists ? publishedPlaylist.data() : null;
-      const previousTenantSettings = tenant.data()?.configuracoes ?? {};
+      const previousTenantSettings = tenantData.configuracoes ?? {};
       const layoutConfigurado = previousDraft
         ? previousDraft.layoutConfigurado === true
         : publishedPlaylist.exists || previousTenantSettings.layoutConfigurado === true;
@@ -349,20 +358,24 @@ export async function POST(request, { params }) {
         throw new RouteError("Preencha nome, os dois logos, os dois slogans, título de destaques e pelo menos um aviso antes do primeiro salvamento.", 400);
       }
 
-      const savedDraft = {
+      transaction.set(draftRef, {
         ...draft,
         layoutConfigurado: true,
         updatedAt: FieldValue.serverTimestamp(),
-        updatedBy: authorization.uid,
-      };
-      transaction.set(draftRef, savedDraft);
+        updatedBy: principal.uid,
+      });
 
       if (body.action === "publish") {
         transaction.set(playlistRef, {
           ...draft,
           tenantId,
+          isPublished: true,
           publishedAt: FieldValue.serverTimestamp(),
-          version: 1,
+          version: (previousPublished?.version ?? 0) + 1,
+          subscriptionStatus: tenantData.subscriptionStatus,
+          adsEvery,
+          adsEveryGrace,
+          gracePeriodDays,
         });
       }
       return { layoutConfigurado: true, draft };
@@ -375,13 +388,6 @@ export async function POST(request, { params }) {
       publishedAt: playlist ? toIsoDate(playlist.data()?.publishedAt) : null,
     });
   } catch (error) {
-    if (error instanceof RouteError) {
-      return Response.json({ error: error.message }, { status: error.status });
-    }
-    if (error.message?.includes("tenantId inválido")) {
-      return Response.json({ error: error.message }, { status: 400 });
-    }
-    console.error("Falha ao salvar/publicar playlist.", error);
-    return Response.json({ error: "Não foi possível salvar a playlist." }, { status: 500 });
+    return handleRouteError(error, "Falha ao salvar/publicar playlist.");
   }
 }
